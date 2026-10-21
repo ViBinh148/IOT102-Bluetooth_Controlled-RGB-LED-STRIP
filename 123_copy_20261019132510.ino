@@ -1,4 +1,4 @@
-//các thư viện cần thiết
+
 #include <Adafruit_NeoPixel.h>
 #include <SoftwareSerial.h>
 #include <Wire.h>
@@ -6,22 +6,33 @@
 #include <string.h>
 #include <ctype.h>
 
-
 // ======================================
 // 1. PIN CONFIG
 // ======================================
+
 #define LED_PIN 11
 #define SOUND_PIN A0
+#define POT_PIN A1
+#define BUTTON_PIN 2
+
 #define BT_RX 10
 #define BT_TX 9
+#define BT_STATE_PIN 7
+#define BUZZER_PIN 8
+
 #define NUM_LEDS 60
 
-//=====================================
-// 2. OBJECT CONFIG
 // ======================================
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-SoftwareSerial bluetooth(BT_RX, BT_TX);
+// 2. OBJECTS
+// ======================================
 
+Adafruit_NeoPixel strip(
+  NUM_LEDS,
+  LED_PIN,
+  NEO_GRB + NEO_KHZ800);
+
+SoftwareSerial bluetooth(BT_RX, BT_TX);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // ======================================
 // 3. MODES
@@ -29,16 +40,18 @@ SoftwareSerial bluetooth(BT_RX, BT_TX);
 
 enum LedMode {
   SOUND_MODE,
-  MANUAL_MODE
+  MANUAL_MODE,
+  RAINBOW_MODE
 };
 
-LedMode currentMode = SOUND_MODE; // Mặc định chế độ là SOUND_MODE
+LedMode currentMode = SOUND_MODE;
 
 bool ledEnabled = true;
 
 // ======================================
 // 4. SOUND SETTINGS
 // ======================================
+
 
 int sensitivity = 5; //độ nhạy
 int noiseThreshold = 6;
@@ -50,51 +63,116 @@ int ledCount = 0;
 // 5. MANUAL COLOR SETTINGS
 // ======================================
 
-uint32_t manualColor; 
-const char* colorName = "RED"; // Màu mặc định là đỏ
+uint32_t manualColor;
+const char* colorName = "RED";
 
 
 bool potEnabled = false; //chiết áp mặc định là tắt
 
-int lastPotValue = -1; //chiết áp mặc định là -1 để không tự động cập nhật màu khi khởi động
+int lastPotValue = -1;
 unsigned long lastPotUpdate = 0;
 
 // ======================================
-// 6. TIMERS //bộ đếm thời gian
+// 6. RAINBOW SETTINGS
+// ======================================
+
+uint16_t rainbowHue = 0;
+
+unsigned long lastRainbowUpdate = 0;
+
+// Smaller interval = faster
+unsigned long rainbowInterval = 20;
+
+// ======================================
+// 7. TIMERS
 // ======================================
 
 unsigned long lastLCDUpdate = 0;
 unsigned long lastLEDUpdate = 0;
 
 // ======================================
-// 7. BLUETOOTH CONNECTION
+// 8. BUTTON SETTINGS
+// ======================================
+
+bool lastButtonReading = HIGH;
+bool stableButtonState = HIGH;
+
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+
+// ======================================
+// 9. BLUETOOTH CONNECTION
 // ======================================
 
 bool lastStateReading = false;
 bool bluetoothConnected = false;
 unsigned long lastStateChange = 0;
 
-//đây là bộ đệm để lưu trữ dữ liệu nhận được từ Bluetooth
+// Bluetooth command buffer
 char btBuffer[16];
 byte btLength = 0;
 unsigned long lastBTCharTime = 0;
 
 // ======================================
-// 8. CHECK BLUETOOTH CONNECTION
+// 10. BUZZER
+// ======================================
+
+byte buzzerStep = 0;
+unsigned long buzzerStepTime = 0;
+
+void playConnectionSound() {
+  tone(BUZZER_PIN, 1500);
+
+  buzzerStep = 1;
+  buzzerStepTime = millis();
+}
+
+void updateBuzzer() {
+  unsigned long now = millis();
+
+  if (buzzerStep == 1 &&
+      now - buzzerStepTime >= 100) {
+
+    noTone(BUZZER_PIN);
+
+    buzzerStep = 2;
+    buzzerStepTime = now;
+  }
+
+  else if (buzzerStep == 2 &&
+           now - buzzerStepTime >= 80) {
+
+    tone(BUZZER_PIN, 2000);
+
+    buzzerStep = 3;
+    buzzerStepTime = now;
+  }
+
+  else if (buzzerStep == 3 &&
+           now - buzzerStepTime >= 150) {
+
+    noTone(BUZZER_PIN);
+    buzzerStep = 0;
+  }
+}
+
+// ======================================
+// 11. CHECK BLUETOOTH CONNECTION
 // ======================================
 
 void checkBluetoothConnection() {
 
-  // Kiểm tra trạng thái của chân BT_STATE_PIN để xác định xem Bluetooth có đang kết nối hay không
+  // Assumes HC-05 STATE = HIGH
+  // when connected
   bool reading =
     digitalRead(BT_STATE_PIN) == HIGH;
 
   if (reading != lastStateReading) {
     lastStateReading = reading;
-    lastStateChange = millis(); // Cập nhật thời gian thay đổi trạng thái
+    lastStateChange = millis();
   }
 
-  if (millis() - lastStateChange < 150) { // Nếu trạng thái thay đổi trong vòng 150ms, bỏ qua để tránh nhiễu
+  if (millis() - lastStateChange < 150) {
     return;
   }
 
@@ -112,7 +190,7 @@ void checkBluetoothConnection() {
 }
 
 // ======================================
-// 9. MODE STATUS
+// 12. MODE STATUS
 // ======================================
 
 const char* getModeName() {
@@ -122,18 +200,20 @@ const char* getModeName() {
 
     case MANUAL_MODE:
       return "MANUAL";
-    default:
-      return "UNKNOWN";
-  }
-}
 
-void sendModeStatus() { //gửi qua bluetooth
+    case RAINBOW_MODE:
+      return "RAINBOW";
+  }
+
+ 
+
+void sendModeStatus() {
   bluetooth.print("MODE:");
   bluetooth.println(getModeName());
 }
 
 // ======================================
-// 10. CHANGE MODE
+// 13. CHANGE MODE
 // ======================================
 
 void changeMode(LedMode newMode) {
@@ -154,7 +234,36 @@ void changeMode(LedMode newMode) {
 }
 
 // ======================================
-// 11. SET MANUAL COLOR
+// 14. PHYSICAL BUTTON
+// ======================================
+
+void checkButton() {
+  bool reading = digitalRead(BUTTON_PIN);
+
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+
+  if (millis() - lastDebounceTime > debounceDelay) {
+    if (reading != stableButtonState) {
+
+      stableButtonState = reading;
+
+      if (stableButtonState == LOW) {
+
+        LedMode nextMode =
+          (LedMode)((currentMode + 1) % 3);
+
+        changeMode(nextMode);
+      }
+    }
+  }
+
+  lastButtonReading = reading;
+}
+
+// ======================================
+// 15. SET MANUAL COLOR
 // ======================================
 
 void setManualColor(
@@ -164,7 +273,7 @@ void setManualColor(
   const char* name
 ) {
 
-  // Tắt chế độ chiết áp khi người dùng chọn màu thủ công
+  // Bluetooth color has priority
   potEnabled = false;
 
   changeMode(MANUAL_MODE);
@@ -180,9 +289,9 @@ void setManualColor(
 }
 
 // ======================================
-// 12. PROCESS BLUETOOTH COMMAND
+// 16. PROCESS BLUETOOTH COMMAND
 // ======================================
-//dự kiến các manual color
+
 void processBluetoothCommand(const char* command) {
 
   Serial.print("Received: ");
@@ -198,6 +307,9 @@ void processBluetoothCommand(const char* command) {
     changeMode(MANUAL_MODE);
   }
 
+  else if (strcmp(command, "A") == 0) {
+    changeMode(RAINBOW_MODE);
+  }
 
   // ----- MANUAL COLORS -----
 
@@ -250,7 +362,7 @@ void processBluetoothCommand(const char* command) {
     setManualColor(0, 0, 0, "BLACK");
   }
 
-    // ----- LED ON / OFF -----
+  // ----- LED ON / OFF -----
 
   else if (strcmp(command, "O") == 0) {
     ledEnabled = false;
@@ -262,7 +374,7 @@ void processBluetoothCommand(const char* command) {
     bluetooth.println("LED:ON");
   }
 
-  // ----- Chiết áp -----
+  // ----- POTENTIOMETER -----
 
   else if (strcmp(command, "P") == 0) {
 
@@ -281,8 +393,50 @@ void processBluetoothCommand(const char* command) {
     bluetooth.println("POT:OFF");
   }
 
-  // ======================================
-// 13. READ BLUETOOTH
+  // ----- RAINBOW SPEED -----
+
+  else if (strcmp(command, "+") == 0) {
+
+    if (rainbowInterval > 5) {
+      rainbowInterval -= 5;
+    }
+
+    bluetooth.print("RAINBOW_SPEED:");
+    bluetooth.println(rainbowInterval);
+  }
+
+  else if (strcmp(command, "-") == 0) {
+
+    if (rainbowInterval < 100) {
+      rainbowInterval += 5;
+    }
+
+    bluetooth.print("RAINBOW_SPEED:");
+    bluetooth.println(rainbowInterval);
+  }
+
+  // ----- REQUEST CURRENT STATUS -----
+
+  else if (strcmp(command, "?") == 0) {
+    sendModeStatus();
+
+    bluetooth.print("COLOR:");
+    bluetooth.println(colorName);
+
+    bluetooth.print("POT:");
+    bluetooth.println(potEnabled ? "ON" : "OFF");
+
+    bluetooth.print("LED:");
+    bluetooth.println(ledEnabled ? "ON" : "OFF");
+  }
+
+  else {
+    bluetooth.println("UNKNOWN COMMAND");
+  }
+}
+
+// ======================================
+// 17. READ BLUETOOTH
 // ======================================
 
 void readBluetooth() {
@@ -311,7 +465,7 @@ void readBluetooth() {
     }
   }
 
-  // đọc dữ liệu từ Bluetooth và xử lý khi không nhận được ký tự mới trong 150ms
+  // Also accept commands without newline
   if (btLength > 0 &&
       millis() - lastBTCharTime >= 150) {
 
@@ -323,7 +477,7 @@ void readBluetooth() {
 }
 
 // ======================================
-// 14. SOUND SENSOR
+// 18. SOUND SENSOR
 // ======================================
 
 void readSoundSensor() {
@@ -365,4 +519,303 @@ void readSoundSensor() {
   ledCount = constrain(
     ledCount, 0, NUM_LEDS
   );
+}
+
+// ======================================
+// 19. POTENTIOMETER
+// ======================================
+
+void updatePotentiometer() {
+
+  // Ignore A1 if pot control is disabled
+  if (!potEnabled) {
+    return;
+  }
+
+  if (!ledEnabled || currentMode != MANUAL_MODE) {
+    return;
+  }
+
+  if (millis() - lastPotUpdate < 50) {
+    return;
+  }
+
+  lastPotUpdate = millis();
+
+  // Average 8 analog readings
+  long total = 0;
+
+  for (int i = 0; i < 8; i++) {
+    total += analogRead(POT_PIN);
+  }
+
+  int potValue = total / 8;
+
+  // Save starting position
+  if (lastPotValue < 0) {
+
+    lastPotValue = potValue;
+
+    // Initial color when pot control starts
+    uint16_t hue = map(
+      potValue, 0, 1023, 0, 65535
+    );
+
+    manualColor = strip.gamma32(
+      strip.ColorHSV(hue, 255, 255)
+    );
+
+    colorName = "CUSTOM";
+    return;
+  }
+
+  // Filter small fluctuations
+  if (abs(potValue - lastPotValue) < 15) {
+    return;
+  }
+
+  lastPotValue = potValue;
+
+  uint16_t hue = map(
+    potValue, 0, 1023, 0, 65535
+  );
+
+  manualColor = strip.gamma32(
+    strip.ColorHSV(hue, 255, 255)
+  );
+
+  colorName = "CUSTOM";
+}
+
+// ======================================
+// 20. LED EFFECTS
+// ======================================
+
+void updateLED() {
+
+  // LED OFF
+  if (!ledEnabled) {
+
+    strip.clear();
+    strip.show();
+    return;
+  }
+
+  // SOUND MODE
+  if (currentMode == SOUND_MODE) {
+
+    readSoundSensor();
+
+    strip.clear();
+
+    for (int i = 0; i < ledCount; i++) {
+
+      if (i < NUM_LEDS / 3) {
+
+        strip.setPixelColor(
+          i, strip.Color(0, 255, 0)
+        );
+      }
+
+      else if (i < NUM_LEDS * 2 / 3) {
+
+        strip.setPixelColor(
+          i, strip.Color(255, 150, 0)
+        );
+      }
+
+      else {
+
+        strip.setPixelColor(
+          i, strip.Color(255, 0, 0)
+        );
+      }
+    }
+
+    strip.show();
+  }
+
+  // MANUAL MODE
+  else if (currentMode == MANUAL_MODE) {
+
+    strip.fill(manualColor);
+    strip.show();
+  }
+
+  // RAINBOW MODE
+  else if (currentMode == RAINBOW_MODE) {
+
+    if (millis() - lastRainbowUpdate >=
+        rainbowInterval) {
+
+      lastRainbowUpdate = millis();
+
+      for (int i = 0; i < NUM_LEDS; i++) {
+
+        uint16_t hue =
+          rainbowHue +
+          (uint32_t)i * 65536UL / NUM_LEDS;
+
+        strip.setPixelColor(
+          i,
+          strip.gamma32(strip.ColorHSV(hue))
+        );
+      }
+
+      strip.show();
+
+      rainbowHue += 320;
+    }
+  }
+}
+
+// ======================================
+// 21. LCD DISPLAY
+// ======================================
+
+void printLCDLine(byte row, const char* message) {
+
+  lcd.setCursor(0, row);
+  lcd.print(message);
+
+  byte length = strlen(message);
+
+  for (byte i = length; i < 16; i++) {
+    lcd.print(' ');
+  }
+}
+
+void updateLCD() {
+
+  if (millis() - lastLCDUpdate < 300) {
+    return;
+  }
+
+  lastLCDUpdate = millis();
+
+  char line1[17];
+  char line2[17];
+
+  if (!ledEnabled) {
+
+    strcpy(line1, "LED: OFF");
+
+    snprintf(
+      line2, sizeof(line2),
+      "MODE: %s",
+      getModeName()
+    );
+  }
+
+  else if (currentMode == SOUND_MODE) {
+
+    strcpy(line1, "MODE: SOUND");
+
+    snprintf(
+      line2, sizeof(line2),
+      "LED: %d/%d",
+      ledCount,
+      NUM_LEDS
+    );
+  }
+
+  else if (currentMode == MANUAL_MODE) {
+
+    strcpy(line1, "MODE: MANUAL");
+
+    snprintf(
+      line2, sizeof(line2),
+      "COLOR: %s",
+      colorName
+    );
+  }
+
+  else {
+
+    strcpy(line1, "MODE: RAINBOW");
+
+    snprintf(
+      line2, sizeof(line2),
+      "SPEED: %lums",
+      rainbowInterval
+    );
+  }
+
+  printLCDLine(0, line1);
+  printLCDLine(1, line2);
+}
+
+// ======================================
+// 22. SETUP
+// ======================================
+
+void setup() {
+
+  Serial.begin(9600);
+  bluetooth.begin(9600);
+
+  pinMode(SOUND_PIN, INPUT);
+  pinMode(POT_PIN, INPUT);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(BT_STATE_PIN, INPUT);
+
+  // Initialize LED
+  strip.begin();
+  strip.setBrightness(30);
+  strip.clear();
+  strip.show();
+
+  manualColor = strip.Color(255, 0, 0);
+
+  // Pot disabled by default
+  potEnabled = false;
+
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+
+  lcd.setCursor(0, 0);
+  lcd.print("IOT102 PROJECT");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+
+  delay(1000);
+  lcd.clear();
+
+  Serial.println("System Ready!");
+  bluetooth.println("System Ready!");
+}
+
+// ======================================
+// 23. MAIN LOOP
+// ======================================
+
+void loop() {
+
+  checkBluetoothConnection();
+
+  checkButton();
+
+  readBluetooth();
+
+  updatePotentiometer();
+
+  // Sound mode runs about every 30ms
+  if (currentMode != SOUND_MODE ||
+      millis() - lastLEDUpdate >= 30) {
+
+    lastLEDUpdate = millis();
+
+    updateLED();
+  }
+
+  updateLCD();
+
+  updateBuzzer();
+
+  delay(5);
 }
