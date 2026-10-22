@@ -94,59 +94,107 @@ void setColor(int red, int green, int blue, const char* name) {
 
 // XỬ LÝ LỆNH ĐIỆN THOẠI GỬI XUỐNG
 void doCommand(const char* text) {
-  if (strcmp(text, "S") == 0) setMode(0);
-  else if (strcmp(text, "M") == 0) setMode(1);
-  else if (strcmp(text, "A") == 0) setMode(2);
+  switch (strlen(text)) {
+    case 1: // LỆNH MỘT CHỮ
+      switch (text[0]) {
+        case 'S': setMode(0); break;
+        case 'M': setMode(1); break;
+        case 'A': setMode(2); break;
+        case 'R': setColor(255, 0, 0, "RED"); break;
+        case 'G': setColor(0, 255, 0, "GREEN"); break;
+        case 'B': setColor(0, 0, 255, "BLUE"); break;
+        case 'Y': setColor(255, 255, 0, "YELLOW"); break;
+        case 'W': setColor(255, 255, 255, "WHITE"); break;
+        case 'K': setColor(0, 0, 0, "BLACK"); break;
+        case 'O':
+          ledOn = false;
+          bluetooth.println("LED:OFF");
+          break;
+        case 'N':
+          ledOn = true;
+          bluetooth.println("LED:ON");
+          break;
+        case 'P':
+          setMode(1);
+          potOn = true;  // Bật chiết áp để chọn màu bằng P trên điện thoại
+          lastPot = -1;
+          bluetooth.println("POT:ON");
+          break;
+        case 'Q':
+          potOn = false;
+          bluetooth.println("POT:OFF");
+          break;
+        case '+':
+          if (rainbowSpeed > 5) rainbowSpeed -= 5;
+          bluetooth.print("RAINBOW_SPEED:");
+          bluetooth.println(rainbowSpeed);
+          break;
+        case '-':
+          if (rainbowSpeed < 100) rainbowSpeed += 5;
+          bluetooth.print("RAINBOW_SPEED:");
+          bluetooth.println(rainbowSpeed);
+          break;
+        case '?':
+          sendMode();
+          bluetooth.print("COLOR:"); bluetooth.println(colorName);
+          bluetooth.print("POT:"); bluetooth.println(potOn ? "ON" : "OFF");
+          bluetooth.print("LED:"); bluetooth.println(ledOn ? "ON" : "OFF");
+          break;
+        default:
+          bluetooth.println("UNKNOWN COMMAND");
+          break;
+      }
+      break;
 
-  else if (strcmp(text, "R") == 0) setColor(255, 0, 0, "RED");
-  else if (strcmp(text, "G") == 0) setColor(0, 255, 0, "GREEN");
-  else if (strcmp(text, "B") == 0) setColor(0, 0, 255, "BLUE");
-  else if (strcmp(text, "PU") == 0) setColor(128, 0, 255, "PURPLE");
-  else if (strcmp(text, "PK") == 0) setColor(255, 105, 180, "PINK");
-  else if (strcmp(text, "Y") == 0) setColor(255, 255, 0, "YELLOW");
-  else if (strcmp(text, "OR") == 0) setColor(255, 128, 0, "ORANGE");
-  else if (strcmp(text, "CY") == 0) setColor(0, 255, 255, "CYAN");
-  else if (strcmp(text, "MG") == 0) setColor(255, 0, 255, "MAGENTA");
-  else if (strcmp(text, "W") == 0) setColor(255, 255, 255, "WHITE");
-  else if (strcmp(text, "WW") == 0) setColor(255, 180, 90, "WARM");
-  else if (strcmp(text, "BL") == 0 || strcmp(text, "K") == 0)
-    setColor(0, 0, 0, "BLACK");
+    case 2: // LỆNH HAI CHỮ
+      switch (text[0]) {
+        case 'P':
+          switch (text[1]) {
+            case 'U': setColor(128, 0, 255, "PURPLE"); break;
+            case 'K': setColor(255, 105, 180, "PINK"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        case 'O':
+          switch (text[1]) {
+            case 'R': setColor(255, 128, 0, "ORANGE"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        case 'C':
+          switch (text[1]) {
+            case 'Y': setColor(0, 255, 255, "CYAN"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        case 'M':
+          switch (text[1]) {
+            case 'G': setColor(255, 0, 255, "MAGENTA"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        case 'W':
+          switch (text[1]) {
+            case 'W': setColor(255, 180, 90, "WARM"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        case 'B':
+          switch (text[1]) {
+            case 'L': setColor(0, 0, 0, "BLACK"); break;
+            default: bluetooth.println("UNKNOWN COMMAND"); break;
+          }
+          break;
+        default:
+          bluetooth.println("UNKNOWN COMMAND");
+          break;
+      }
+      break;
 
-  else if (strcmp(text, "O") == 0) {
-    ledOn = false;
-    bluetooth.println("LED:OFF");
+    default:
+      bluetooth.println("UNKNOWN COMMAND");
+      break;
   }
-  else if (strcmp(text, "N") == 0) { 
-    ledOn = true;
-    bluetooth.println("LED:ON");
-  }
-  else if (strcmp(text, "P") == 0) {
-    setMode(1);
-    potOn = true;  // Bật chiết áp để chọn màu bằng P trên điện thoại
-    lastPot = -1;
-    bluetooth.println("POT:ON");
-  }
-  else if (strcmp(text, "Q") == 0) {
-    potOn = false;
-    bluetooth.println("POT:OFF");
-  }
-  else if (strcmp(text, "+") == 0) {
-    if (rainbowSpeed > 5) rainbowSpeed -= 5;
-    bluetooth.print("RAINBOW_SPEED:");
-    bluetooth.println(rainbowSpeed);
-  }
-  else if (strcmp(text, "-") == 0) {
-    if (rainbowSpeed < 100) rainbowSpeed += 5;
-    bluetooth.print("RAINBOW_SPEED:");
-    bluetooth.println(rainbowSpeed);
-  }
-  else if (strcmp(text, "?") == 0) {
-    sendMode();
-    bluetooth.print("COLOR:"); bluetooth.println(colorName);
-    bluetooth.print("POT:"); bluetooth.println(potOn ? "ON" : "OFF");
-    bluetooth.print("LED:"); bluetooth.println(ledOn ? "ON" : "OFF");
-  }
-  else bluetooth.println("UNKNOWN COMMAND");
 }
 
 // NHẬN LỆNH BLUETOOTH, CẢ LỆNH HAI CHỮ
